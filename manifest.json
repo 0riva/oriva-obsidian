@@ -1,0 +1,10 @@
+{
+  "id": "oriva",
+  "name": "Oriva",
+  "version": "1.0.0",
+  "minAppVersion": "1.14.4",
+  "description": "Keep your vault in step with your Oriva notes, and ask AI about a note on your own key.",
+  "author": "Oriva",
+  "authorUrl": "https://oriva.io",
+  "isDesktopOnly": false
+}
