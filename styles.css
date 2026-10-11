@@ -1,0 +1,13 @@
+/* Oriva for Obsidian — the "Ask AI about this note" window. */
+.oriva-ask-input {
+  width: 100%;
+}
+
+.oriva-ask-answer {
+  white-space: pre-wrap;
+  margin-top: var(--size-4-3);
+}
+
+.oriva-ask-button {
+  margin-top: var(--size-4-2);
+}

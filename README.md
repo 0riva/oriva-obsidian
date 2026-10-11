@@ -4,7 +4,7 @@ Keep your vault in step with your Oriva notes, and ask AI about a note on your o
 
 ## What it does
 
-- **Sync with Oriva.** Notes in this vault arrive in Oriva as private notes, and edits in either place reach the other — when you run the "Sync with Oriva" command, click the ribbon icon, or automatically every few minutes (you choose how often, or turn it off).
+- **Sync notes with Oriva.** Notes in this vault arrive in Oriva as private notes, and edits in either place reach the other — when you run the "Sync notes" command, click the ribbon icon, or automatically every few minutes (you choose how often, or turn it off).
   - If a note changed in both places since the last sync, the newer version is kept and the other is saved beside it as `Name (conflicted copy, Oriva|this device, YYYY-MM-DD).md`, and you are told.
   - Deleting a note in one place never deletes it in the other. The note is unlinked instead, and you are told.
   - Each synced note gets an `oriva_id` line in its frontmatter, which keeps it linked to the same Oriva note if you rename or move it.
@@ -37,5 +37,5 @@ npm install
 npm run build
 ```
 
-This writes `main.js`, the file Obsidian loads. A release carries `main.js` and `manifest.json`,
+This writes `main.js`, the file Obsidian loads. A release carries `main.js`, `manifest.json` and `styles.css`,
 tagged with the version in `manifest.json`.

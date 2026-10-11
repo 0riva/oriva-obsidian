@@ -2,7 +2,7 @@
  * Oriva for Obsidian.
  *
  * Free core:
- *  - Sync with Oriva — keeps this vault in step with the person's Oriva notes, using the same engine
+ *  - Sync notes — keeps this vault in step with the person's Oriva notes, using the same engine
  *    as the Oriva desktop app (`packages/shared/services/vaultSync/folderSync.ts`): newest edit wins
  *    a clash and the other version is kept as a "conflicted copy"; deleting never cascades.
  *  - Ask AI about this note — on the person's OWN AI key, straight to their provider.
@@ -10,7 +10,7 @@
  * Nothing here pays anyone or is sent anywhere except Oriva (for sync) and the AI provider the person
  * chose (for questions). No analytics.
  */
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl } from 'obsidian';
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, requestUrl, type SettingDefinitionItem } from 'obsidian';
 import {
   describeSyncReport,
   emptyFolderSyncState,
@@ -18,7 +18,7 @@ import {
   type FolderSyncState,
 } from './engine/folderSync';
 import { tokenNotesApi } from './orivaNotesApi';
-import { vaultFolderAdapter, type VaultLike } from './vaultAdapter';
+import { vaultFolderAdapter } from './vaultAdapter';
 import { askAboutNote, DEFAULT_MODELS, type AiProvider } from './askAi';
 import type { Http } from './request';
 
@@ -68,7 +68,8 @@ export default class OrivaPlugin extends Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...(stored.settings ?? {}) };
     this.syncState = stored.syncState?.version === 1 ? stored.syncState : emptyFolderSyncState();
 
-    this.addCommand({ id: 'sync', name: 'Sync with Oriva', callback: () => void this.syncNow(true) });
+    // Obsidian prints the plugin name beside every command, so the name itself leaves "Oriva" out.
+    this.addCommand({ id: 'sync', name: 'Sync notes', callback: () => void this.syncNow(true) });
     this.addCommand({
       id: 'ask-ai-about-note',
       name: 'Ask AI about this note',
@@ -79,7 +80,7 @@ export default class OrivaPlugin extends Plugin {
         return true;
       },
     });
-    this.addRibbonIcon('refresh-cw', 'Sync with Oriva', () => void this.syncNow(true));
+    this.addRibbonIcon('refresh-cw', 'Sync notes', () => void this.syncNow(true));
     this.addSettingTab(new OrivaSettingTab(this.app, this));
     this.restartTimer();
   }
@@ -113,7 +114,7 @@ export default class OrivaPlugin extends Plugin {
     this.syncing = (async () => {
       try {
         const api = tokenNotesApi(this.settings.orivaUrl, this.settings.token, http);
-        const { state, report } = await syncFolder(vaultFolderAdapter(this.app.vault as unknown as VaultLike), api, this.syncState);
+        const { state, report } = await syncFolder(vaultFolderAdapter(this.app.vault), api, this.syncState);
         this.syncState = state;
         await this.persist();
         const lines = describeSyncReport(report);
@@ -147,25 +148,27 @@ class AskAiModal extends Modal {
   onOpen(): void {
     const { contentEl } = this;
     this.titleEl.setText(`Ask AI about "${this.file.basename}"`);
-    const input = contentEl.createEl('textarea', { attr: { rows: '4', placeholder: 'What would you like to know about this note?' } });
-    input.style.width = '100%';
-    const answer = contentEl.createEl('div');
-    answer.style.whiteSpace = 'pre-wrap';
-    answer.style.marginTop = '12px';
-    const button = contentEl.createEl('button', { text: 'Ask', cls: 'mod-cta' });
-    button.style.marginTop = '8px';
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      answer.setText('Thinking…');
-      try {
-        const text = await this.app.vault.cachedRead(this.file);
-        answer.setText(await this.plugin.ask(input.value, this.file, text));
-      } catch (error) {
-        answer.setText(error instanceof Error ? error.message : 'The question could not be answered.');
-      } finally {
-        button.disabled = false;
-      }
+    // Layout lives in styles.css (Obsidian asks plugins not to set styles inline).
+    const input = contentEl.createEl('textarea', {
+      cls: 'oriva-ask-input',
+      attr: { rows: '4', placeholder: 'What would you like to know about this note?' },
     });
+    const answer = contentEl.createDiv({ cls: 'oriva-ask-answer' });
+    const button = contentEl.createEl('button', { text: 'Ask', cls: ['mod-cta', 'oriva-ask-button'] });
+    button.addEventListener('click', () => void this.answer(input.value, answer, button));
+  }
+
+  private async answer(question: string, answer: HTMLElement, button: HTMLButtonElement): Promise<void> {
+    button.disabled = true;
+    answer.setText('Thinking…');
+    try {
+      const text = await this.app.vault.cachedRead(this.file);
+      answer.setText(await this.plugin.ask(question, this.file, text));
+    } catch (error) {
+      answer.setText(error instanceof Error ? error.message : 'The question could not be answered.');
+    } finally {
+      button.disabled = false;
+    }
   }
 
   onClose(): void {
@@ -173,94 +176,111 @@ class AskAiModal extends Modal {
   }
 }
 
+/**
+ * Declared settings (Obsidian 1.13+), so each one appears in Obsidian's settings search. Every row
+ * draws its own control: the token and AI key stay masked, and every change goes through
+ * `saveSettings`, which keeps the sync state stored beside the settings.
+ */
 class OrivaSettingTab extends PluginSettingTab {
   constructor(app: App, private readonly plugin: OrivaPlugin) {
     super(app, plugin);
   }
 
-  display(): void {
-    const { containerEl } = this;
+  getSettingDefinitions(): SettingDefinitionItem[] {
     const settings = this.plugin.settings;
-    containerEl.empty();
-
-    containerEl.createEl('p', {
-      text:
-        'Sync keeps this vault in step with your Oriva notes. Notes arrive in Oriva as private notes. If a note changed in both ' +
-        'places, the newer version is kept and the other is saved beside it as a "conflicted copy", and you are told. Deleting a ' +
-        'note in one place never deletes it in the other.',
-    });
-
-    new Setting(containerEl)
-      .setName('Oriva address')
-      .setDesc('Leave as https://oriva.io unless you were told otherwise.')
-      .addText((text) =>
-        text.setValue(settings.orivaUrl).onChange(async (value) => {
-          settings.orivaUrl = value;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName('Personal access token')
-      .setDesc('Create one at oriva.io → Settings → Personal access tokens. It starts with oriva_pk_.')
-      .addText((text) => {
+    const save = () => this.plugin.saveSettings();
+    const masked = (setting: Setting, value: string, onChange: (value: string) => void) =>
+      setting.addText((text) => {
         text.inputEl.type = 'password';
-        text.setValue(settings.token).onChange(async (value) => {
-          settings.token = value.trim();
-          await this.plugin.saveSettings();
+        text.setValue(value).onChange((next) => {
+          onChange(next.trim());
+          void save();
         });
       });
+    const fallback = () => DEFAULT_MODELS[settings.aiProvider];
 
-    new Setting(containerEl)
-      .setName('Sync every (minutes)')
-      .setDesc('0 turns automatic sync off; you can still run "Sync with Oriva" yourself.')
-      .addText((text) =>
-        text.setValue(String(settings.syncEveryMinutes)).onChange(async (value) => {
-          const minutes = Number(value);
-          settings.syncEveryMinutes = Number.isFinite(minutes) && minutes >= 0 ? minutes : DEFAULT_SETTINGS.syncEveryMinutes;
-          await this.plugin.saveSettings();
-        }),
-      );
-
-    new Setting(containerEl).setName('Ask AI').setHeading();
-
-    new Setting(containerEl)
-      .setName('AI provider')
-      .setDesc('Questions go straight from Obsidian to this provider on your own key. Oriva never sees them.')
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption('anthropic', 'Anthropic (Claude)')
-          .addOption('openai', 'OpenAI')
-          .setValue(settings.aiProvider)
-          .onChange(async (value) => {
-            settings.aiProvider = value as AiProvider;
-            await this.plugin.saveSettings();
-            this.display();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName('Your AI key')
-      .addText((text) => {
-        text.inputEl.type = 'password';
-        text.setValue(settings.aiKey).onChange(async (value) => {
-          settings.aiKey = value.trim();
-          await this.plugin.saveSettings();
-        });
-      });
-
-    const fallback = DEFAULT_MODELS[settings.aiProvider];
-    new Setting(containerEl)
-      .setName('Model')
-      .setDesc(fallback ? `Leave empty for ${fallback}.` : 'The model name your key is for.')
-      .addText((text) =>
-        text
-          .setPlaceholder(fallback)
-          .setValue(settings.aiModel)
-          .onChange(async (value) => {
-            settings.aiModel = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
+    return [
+      {
+        type: 'group',
+        items: [
+          {
+            name: 'How sync works',
+            desc:
+              'Sync keeps this vault in step with your Oriva notes. Notes arrive in Oriva as private notes. If a note changed in both ' +
+              'places, the newer version is kept and the other is saved beside it as a "conflicted copy", and you are told. Deleting a ' +
+              'note in one place never deletes it in the other.',
+          },
+          {
+            name: 'Oriva address',
+            desc: 'Leave as https://oriva.io unless you were told otherwise.',
+            render: (setting) =>
+              void setting.addText((text) =>
+                text.setValue(settings.orivaUrl).onChange((value) => {
+                  settings.orivaUrl = value;
+                  void save();
+                }),
+              ),
+          },
+          {
+            name: 'Personal access token',
+            desc: 'Create one at oriva.io → Settings → Personal access tokens. It starts with oriva_pk_.',
+            render: (setting) => void masked(setting, settings.token, (value) => (settings.token = value)),
+          },
+          {
+            name: 'Sync every (minutes)',
+            desc: '0 turns automatic sync off; you can still sync any time from the command palette or the ribbon.',
+            render: (setting) =>
+              void setting.addText((text) =>
+                text.setValue(String(settings.syncEveryMinutes)).onChange((value) => {
+                  const minutes = Number(value);
+                  settings.syncEveryMinutes = Number.isFinite(minutes) && minutes >= 0 ? minutes : DEFAULT_SETTINGS.syncEveryMinutes;
+                  void save();
+                }),
+              ),
+          },
+        ],
+      },
+      {
+        type: 'group',
+        heading: 'Ask AI',
+        items: [
+          {
+            name: 'AI provider',
+            desc: 'Questions go straight from Obsidian to this provider on your own key. Oriva never sees them.',
+            render: (setting) =>
+              void setting.addDropdown((dropdown) =>
+                dropdown
+                  .addOption('anthropic', 'Anthropic (Claude)')
+                  .addOption('openai', 'OpenAI')
+                  .setValue(settings.aiProvider)
+                  .onChange((value) => {
+                    settings.aiProvider = value as AiProvider;
+                    void save();
+                    // The model hint below depends on the provider.
+                    this.update();
+                  }),
+              ),
+          },
+          {
+            name: 'Your AI key',
+            render: (setting) => void masked(setting, settings.aiKey, (value) => (settings.aiKey = value)),
+          },
+          {
+            name: 'Model',
+            desc: fallback() ? `Leave empty for ${fallback()}.` : 'The model name your key is for.',
+            render: (setting) =>
+              void setting.addText((text) =>
+                text
+                  .setPlaceholder(fallback())
+                  .setValue(settings.aiModel)
+                  .onChange((value) => {
+                    settings.aiModel = value.trim();
+                    void save();
+                  }),
+              ),
+          },
+        ],
+      },
+    ];
   }
 }
