@@ -9,6 +9,10 @@
  * on both hosts and are tested once.
  *
  * The rules, as the person is told them:
+ *  - Only the notes you mark are synced: add the property `oriva: true` to a note.
+ *    Everything else in the folder is never read into Oriva and never changed. A note already
+ *    linked to Oriva (it carries `oriva_id`) keeps syncing. A note marked `oriva: chain` was
+ *    published as a chain of entries and is left alone by plain sync, both ways.
  *  - A note changed on one side only: that side's version is copied to the other.
  *  - A note changed on BOTH sides since the last sync: the most recent edit wins, and the other
  *    version is kept beside it as "<name> (conflicted copy, Oriva|this device, <date>).md". The
@@ -97,6 +101,17 @@ export function removeOrivaId(markdown: string): string {
   return `---\n${kept.join('\n')}\n---\n${rest}`;
 }
 
+/**
+ * The value of the `oriva` property in a note's properties block, lower-cased and unquoted —
+ * `'true'`, `'chain'`, … — or undefined when there is none. The body is never read.
+ */
+export function readOrivaMark(markdown: string): string | undefined {
+  const block = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const line = block?.[1]!.match(/^oriva:[ \t]*(.*?)[ \t]*$/m);
+  if (!line) return undefined;
+  return line[1]!.replace(/^(['"])(.*)\1$/, '$2').toLowerCase();
+}
+
 /** The text two sides compare: no `oriva_id`, Unix line endings, no trailing blank space. */
 export const normaliseNoteText = (text: string): string => removeOrivaId(text).replace(/\r\n/g, '\n').trimEnd();
 
@@ -159,7 +174,15 @@ export async function syncFolder(
 
   for (const file of local) {
     if (state.unlinkedPaths.includes(file.path)) continue;
+    const mark = readOrivaMark(file.text);
     let id = extractOrivaId(file.text) ?? recordByPath.get(file.path)?.id;
+    if (mark === 'chain') {
+      // Claimed so its first part is never written back over the file or beside it.
+      if (id) claimed.add(id);
+      continue;
+    }
+    // Not marked and never linked: this note is not the person's to share yet.
+    if (!id && mark !== 'true') continue;
     if (!id) {
       const samePath = remoteByPath.get(file.path);
       if (samePath && !claimed.has(samePath.id)) id = samePath.id;

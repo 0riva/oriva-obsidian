@@ -4,9 +4,10 @@ Keep your vault in step with your Oriva notes, and ask AI about a note on your o
 
 ## What it does
 
-- **Sync notes with Oriva.** Notes in this vault arrive in Oriva as private notes, and edits in either place reach the other — when you run the "Sync notes" command, click the ribbon icon, or automatically every few minutes (you choose how often, or turn it off).
+- **Sync the notes you choose with Oriva.** Only a note whose properties include `oriva: true` is synced; the rest of your vault is never read into Oriva or changed. Marked notes arrive in Oriva as private notes, and edits in either place reach the other — when you run the "Sync notes" command, click the ribbon icon, or automatically every few minutes (you choose how often, or turn it off).
   - If a note changed in both places since the last sync, the newer version is kept and the other is saved beside it as `Name (conflicted copy, Oriva|this device, YYYY-MM-DD).md`, and you are told.
   - Deleting a note in one place never deletes it in the other. The note is unlinked instead, and you are told.
+  - A note marked `oriva: chain` was published as a chain of entries, and sync leaves it alone.
   - Each synced note gets an `oriva_id` line in its frontmatter, which keeps it linked to the same Oriva note if you rename or move it.
 - **Ask AI about this note.** Ask a question about the open note and get the answer in Obsidian, using your own AI key (Anthropic or OpenAI).
 
@@ -23,7 +24,7 @@ The same sync rules run in the Oriva desktop app's folder sync, so a vault kept 
 - **An account is required for sync.** Sync needs an Oriva account and a personal access token. "Ask AI" does not need an Oriva account.
 - **Payment is not required.** Everything in this plugin is free. "Ask AI" is billed by your AI provider to your own key, never by Oriva.
 - **Network use.**
-  - Sync sends your vault's markdown notes to, and reads your synced notes from, the Oriva address in settings (`https://oriva.io` by default), at `/api/vault-sync/notes`. It is needed to keep the two in step.
+  - Sync sends the notes you marked with `oriva: true` to, and reads your synced notes from, the Oriva address in settings (`https://oriva.io` by default), at `/api/vault-sync/notes`. It is needed to keep the two in step.
   - "Ask AI" sends your question and the open note's text straight to the provider you chose — `api.anthropic.com` or `api.openai.com` — and nowhere else. Oriva never sees it.
 - **No telemetry.** The plugin collects no usage data and sends nothing beyond the two uses above.
 - **No files outside the vault** are read or written.
