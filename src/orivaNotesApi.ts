@@ -1,8 +1,17 @@
 /**
- * Oriva's notes API (`/api/vault-sync/notes`), called with the person's own personal
- * access token (`oriva_pk_…`, minted at oriva.io/settings/personal-access-tokens).
+ * Oriva's notes API (`/api/vault-sync/notes`) and chains API (`/api/vault-sync/chains`,
+ * ), called with the person's own personal access token (`oriva_pk_…`, minted at
+ * oriva.io/settings/personal-access-tokens).
  */
-import type { NotesApi, PushNote, PushResult, RemoteNote } from './engine/folderSync';
+import type {
+  ChainPush,
+  ChainPushResult,
+  NotesApi,
+  PushNote,
+  PushResult,
+  RemoteChain,
+  RemoteNote,
+} from './engine/folderSync';
 import { errorFrom, type Http, type HttpResponse } from './request';
 
 /** The API takes at most 200 notes per save. */
@@ -15,6 +24,7 @@ export function normaliseBaseUrl(raw: string): string {
 
 export function tokenNotesApi(baseUrl: string, token: string, http: Http): NotesApi {
   const url = `${normaliseBaseUrl(baseUrl)}/api/vault-sync/notes`;
+  const chainsUrl = `${normaliseBaseUrl(baseUrl)}/api/vault-sync/chains`;
   const key = token.trim();
   if (!key.startsWith('oriva_pk_')) {
     throw new Error('Add your Oriva personal access token in this plugin\'s settings first.');
@@ -45,6 +55,21 @@ export function tokenNotesApi(baseUrl: string, token: string, http: Http): Notes
         results.push(...((read(response) as { results?: PushResult[] }).results ?? []));
       }
       return results;
+    },
+    async listChains(): Promise<RemoteChain[]> {
+      const body = read(await http({ url: chainsUrl, headers, throw: false })) as { chains?: RemoteChain[] };
+      return body.chains ?? [];
+    },
+    async saveChain(chain: ChainPush): Promise<ChainPushResult> {
+      const response = await http({
+        url: chainsUrl,
+        method: 'POST',
+        headers,
+        contentType: 'application/json',
+        body: JSON.stringify({ chain }),
+        throw: false,
+      });
+      return (read(response) as { result: ChainPushResult }).result;
     },
   };
 }
