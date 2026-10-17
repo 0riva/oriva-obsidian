@@ -46,7 +46,10 @@ export function injectOrivaId(markdown: string, entryId: string): string {
  * Lighter than full YAML parse — used for quick checks.
  */
 export function extractOrivaId(markdown: string): string | undefined {
-  const match = markdown.match(/^---\n[\s\S]*?^oriva_id:\s*(.+)$/m);
-  return match?.[1]?.trim();
+  // Only the properties block counts: a note that SHOWS `oriva_id:` in its text (docs, an example)
+  // is not linked to anything.
+  const block = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const match = block?.[1]?.match(/^oriva_id:[ \t]*(\S.*?)[ \t]*$/m);
+  return match?.[1]?.trim() || undefined;
 }
 

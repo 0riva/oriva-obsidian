@@ -167,6 +167,9 @@ export function readOrivaMark(markdown: string): string | undefined {
 /** The text two sides compare: no `oriva_id`, Unix line endings, no trailing blank space. */
 export const normaliseNoteText = (text: string): string => removeOrivaId(text).replace(/\r\n/g, '\n').trimEnd();
 
+/** A note's text without its properties block, for telling a body change from a properties-only one. */
+const withoutProperties = (text: string): string => text.replace(/^---\n[\s\S]*?\n---(?:\n|$)/, '').trim();
+
 /** A fast, stable 53-bit hash (cyrb53) — change detection only, never security. */
 export function noteHash(text: string): string {
   let h1 = 0xdeadbeef;
@@ -589,8 +592,11 @@ export async function syncFolder(
       continue;
     }
 
+    // First sync of a note that differs only by its properties block: Oriva's copy was made without it
+    // (a note published by script carries the body alone), so the vault copy, which has more, wins.
+    const onlyPropertiesDiffer = !rec && withoutProperties(text) === withoutProperties(remoteText);
     const localChanged = rec ? hash !== rec.hash : true;
-    const remoteChanged = rec ? r.updatedAt !== rec.updatedAt : true;
+    const remoteChanged = rec ? r.updatedAt !== rec.updatedAt : !onlyPropertiesDiffer;
 
     if (localChanged && !remoteChanged) {
       pushes.push({ note: { path: file.path, text, id, baseUpdatedAt: r.updatedAt }, local: file, hash, reportAs: 'sentToOriva' });
