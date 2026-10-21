@@ -11,7 +11,8 @@ Keep your vault in step with your Oriva notes, and ask AI about a note on your o
     - editing a section updates only that entry, and its replies stay with it;
     - a new section becomes a new entry in its place, and moving sections reorders them;
     - a removed section leaves the chain but is never deleted: it stays in Oriva as its own private note, with its replies, and you are told;
-    - an edit made in Oriva is written back into that section here; the same section changed in both places follows the newer-wins rule above.
+    - an edit made in Oriva is written back into that section here; the same section changed in both places follows the newer-wins rule above;
+    - **re-cut in Oriva:** on the chain's page in Oriva, choose which headings start an entry. The note here follows on its next sync and keeps your choice in two list properties: `oriva_split` (other headings that start an entry) and `oriva_join` (`## ` headings kept inside the entry above). Editing them here works too. A new `## ` heading you add later still starts its own entry.
   - Each synced note gets an `oriva_id` line in its frontmatter, which keeps it linked to the same Oriva note if you rename or move it.
 - **Ask AI about this note.** Ask a question about the open note and get the answer in Obsidian, using your own AI key (Anthropic or OpenAI).
 

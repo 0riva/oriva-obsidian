@@ -191,7 +191,8 @@ export function isChainNote(markdown: string): boolean {
 export function syncsAsChain(markdown: string): boolean {
   if (isChainNote(markdown)) return true;
   const synced = readOrivaMark(markdown) === 'true' || !!extractOrivaId(markdown);
-  return synced && splitChainNote(markdown).parts.filter((p) => p.text.startsWith('## ')).length >= 2;
+  // The sections: every part after the first, and the first too when it starts with a `## ` heading.
+  return synced && splitChainNote(markdown).parts.filter((p, i) => i > 0 || p.text.startsWith('## ')).length >= 2;
 }
 
 /** The text two sides compare: no `oriva_id`, Unix line endings, no trailing blank space. */
@@ -243,6 +244,143 @@ const PART_LINE = /^[ \t]*(?:%%[ \t]*oriva-part:[ \t]*([0-9a-fA-F-]{36})[ \t]*%%
 const FENCE = /^[ \t]*(```|~~~)/;
 const HEADING = /^#{1,6}[ \t]/;
 
+/**
+ * Cuts the writer chose that differ from "every `## ` starts a section", kept in the note as two
+ * list properties so they survive every sync: `oriva_split` — other headings that start a section;
+ * `oriva_join` — `## ` headings kept inside the section above. A heading is named by its words; a repeated one
+ * gets " (2)", " (3)" in document order, as the import tool names them.
+ */
+export const SPLIT_PROPERTY = 'oriva_split';
+export const JOIN_PROPERTY = 'oriva_join';
+
+const lowerKey = (key: string): string => key.trim().toLowerCase();
+
+/** Each heading line outside code: its level and its name (" (2)" on a repeat). Keyed by line index. */
+function headingKeysOf(lines: readonly string[]): Map<number, { level: number; key: string }> {
+  const out = new Map<number, { level: number; key: string }>();
+  const seen = new Map<string, number>();
+  let inFence = false;
+  lines.forEach((line, i) => {
+    if (FENCE.test(line)) inFence = !inFence;
+    if (inFence) return;
+    const m = line.match(/^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/);
+    if (!m || !m[2]) return;
+    const n = (seen.get(lowerKey(m[2])) ?? 0) + 1;
+    seen.set(lowerKey(m[2]), n);
+    out.set(i, { level: m[1]!.length, key: n > 1 ? `${m[2]} (${n})` : m[2] });
+  });
+  return out;
+}
+
+/** A list property's values (`name:` then `  - a` lines, or `name: [a, b]`, or `name: a`), unquoted. */
+export function readListProperty(front: string, name: string): string[] {
+  const block = front.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!block) return [];
+  const lines = block[1]!.split(/\r?\n/);
+  const at = lines.findIndex((l) => new RegExp(`^${name}:`).test(l));
+  if (at < 0) return [];
+  const unquote = (v: string) => v.trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+  const inline = lines[at]!.slice(name.length + 1).trim();
+  if (inline.startsWith('[')) return inline.replace(/^\[|\]$/g, '').split(',').map(unquote).filter(Boolean);
+  if (inline) return [unquote(inline)].filter(Boolean);
+  const out: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    const m = l.match(/^[ \t]+-[ \t]*(.*)$/);
+    if (!m) break;
+    if (unquote(m[1]!)) out.push(unquote(m[1]!));
+  }
+  return out;
+}
+
+/** The properties block with `name` set to `values` as a list (removed when there are none). */
+export function setListProperty(front: string, name: string, values: readonly string[]): string {
+  const block = front.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!block) return values.length ? `---\n${name}:\n${values.map((v) => `  - ${JSON.stringify(v)}`).join('\n')}\n---\n` : front;
+  const lines = block[1]!.split('\n');
+  const at = lines.findIndex((l) => new RegExp(`^${name}:`).test(l));
+  if (at >= 0) {
+    let end = at + 1;
+    while (end < lines.length && /^[ \t]+-/.test(lines[end]!)) end++;
+    lines.splice(at, end - at);
+  }
+  if (values.length) lines.push(`${name}:`, ...values.map((v) => `  - ${JSON.stringify(v)}`));
+  const kept = lines.filter((l, i) => l.trim() || i < lines.length - 1);
+  return `---\n${kept.join('\n')}\n---\n${front.slice(block[0].length)}`;
+}
+
+/** The cuts a set of parts makes, as the two lists to keep in the note. */
+export function chainCuts(parts: ReadonlyArray<{ text: string }>): { split: string[]; join: string[] } {
+  const lines: string[] = [];
+  const firstLine = new Set<number>();
+  parts.forEach((p) => {
+    if (lines.length) lines.push('');
+    firstLine.add(lines.length);
+    lines.push(...p.text.replace(/\r\n/g, '\n').split('\n'));
+  });
+  const split: string[] = [];
+  const join: string[] = [];
+  for (const [i, h] of headingKeysOf(lines)) {
+    const starts = firstLine.has(i) && i > 0;
+    if (starts && h.level !== 2) split.push(h.key);
+    if (!starts && h.level === 2 && i > 0) join.push(h.key);
+  }
+  return { split, join };
+}
+
+/** Every heading across a chain, in order, and whether it starts a section now — what the re-cut list shows. */
+export function chainHeadings(parts: ReadonlyArray<{ text: string }>): Array<{ key: string; level: number; text: string; starts: boolean; first: boolean }> {
+  const lines: string[] = [];
+  const firstLine = new Set<number>();
+  parts.forEach((p) => {
+    if (lines.length) lines.push('');
+    firstLine.add(lines.length);
+    lines.push(...p.text.replace(/\r\n/g, '\n').split('\n'));
+  });
+  return [...headingKeysOf(lines)].map(([i, h]) => ({
+    key: h.key,
+    level: h.level,
+    text: lines[i]!.replace(/^#+[ \t]*/, '').trim(),
+    starts: firstLine.has(i),
+    first: i === 0,
+  }));
+}
+
+/**
+ * A chain cut again at the chosen headings. A section keeps its id — and its replies — while
+ * the heading it starts with still starts one; a new start becomes a new section; a section whose heading
+ * no longer starts one is `merged` into the section above it. The text is never changed, only where it is cut.
+ */
+export function recutChain(
+  parts: ReadonlyArray<{ id: string; text: string; updatedAt: string }>,
+  starts: readonly string[]
+): { parts: ChainPushPart[]; merged: string[] } {
+  const chosen = new Set(starts.map(lowerKey));
+  const lines: string[] = [];
+  const ownerOfLine = new Map<number, string>();
+  parts.forEach((p) => {
+    if (lines.length) lines.push('');
+    ownerOfLine.set(lines.length, p.id);
+    lines.push(...p.text.replace(/\r\n/g, '\n').split('\n'));
+  });
+  const keys = headingKeysOf(lines);
+  const groups: Array<{ lines: string[]; owner?: string }> = [];
+  lines.forEach((line, i) => {
+    const h = keys.get(i);
+    if (groups.length === 0 || (h && i > 0 && chosen.has(lowerKey(h.key)))) groups.push({ lines: [], owner: ownerOfLine.get(i) });
+    groups[groups.length - 1]!.lines.push(line);
+  });
+  const byId = new Map(parts.map((p) => [p.id, p]));
+  const used = new Set<string>();
+  const out: ChainPushPart[] = groups.map((g) => {
+    const text = g.lines.join('\n').trim();
+    const old = g.owner && !used.has(g.owner) ? byId.get(g.owner) : undefined;
+    if (!old) return { text };
+    used.add(old.id);
+    return old.text.replace(/\r\n/g, '\n').trim() === text ? { id: old.id } : { id: old.id, text, baseUpdatedAt: old.updatedAt };
+  });
+  return { parts: out, merged: parts.filter((p) => !used.has(p.id)).map((p) => p.id) };
+}
+
 export interface ChainNotePart {
   id?: string;
   /** The part's markdown without its id line, trimmed. A `## ` part starts with its heading line. */
@@ -256,13 +394,18 @@ export function splitChainNote(markdown: string): { front: string; parts: ChainN
   const front = fm ? fm[0].replace(/\n?$/, '\n') : '';
   const body = fm ? text.slice(fm[0].length) : text;
 
+  // Where the sections start: every `## `, except headings the writer kept inside the section above
+  // (`oriva_join`), plus other headings they chose to start one (`oriva_split`) — .
+  const split = new Set(readListProperty(front, SPLIT_PROPERTY).map(lowerKey));
+  const join = new Set(readListProperty(front, JOIN_PROPERTY).map(lowerKey));
+  const keys = headingKeysOf(body.split('\n'));
   const groups: string[][] = [];
-  let inFence = false;
-  for (const line of body.split('\n')) {
-    if (FENCE.test(line)) inFence = !inFence;
-    if ((!inFence && /^## /.test(line)) || groups.length === 0) groups.push([]);
+  body.split('\n').forEach((line, i) => {
+    const h = keys.get(i);
+    const starts = !!h && (h.level === 2 ? !join.has(lowerKey(h.key)) : split.has(lowerKey(h.key)));
+    if (starts || groups.length === 0) groups.push([]);
     groups[groups.length - 1]!.push(line);
-  }
+  });
   const parts: ChainNotePart[] = [];
   for (const lines of groups) {
     let id: string | undefined;
@@ -300,7 +443,9 @@ export function joinChainNote(front: string, parts: Array<{ id?: string; text: s
       return HEADING.test(lines[0] ?? '') ? [lines[0], marker, ...lines.slice(1)].join('\n') : [marker, ...lines].join('\n');
     })
     .join('\n\n');
-  const note = `${withChainMark(front)}\n${body}\n`;
+  const cuts = chainCuts(parts);
+  const marked = setListProperty(setListProperty(withChainMark(front), SPLIT_PROPERTY, cuts.split), JOIN_PROPERTY, cuts.join);
+  const note = `${marked}\n${body}\n`;
   return parts[0]?.id ? injectOrivaId(note, parts[0].id) : note;
 }
 
@@ -440,7 +585,7 @@ async function syncChainNote(
   // The order to keep: Oriva's when only Oriva's changed, otherwise the note's.
   type FinalPart = { id?: string; text: string };
   let finalParts: FinalPart[];
-  const removedHere = goneOnOriva;
+  let removedHere = goneOnOriva;
   if (remoteStructure && !localStructure) {
     const localById = new Map(local.filter((p) => p.id).map((p) => [p.id!, p]));
     finalParts = chain.parts.map((r) => {
@@ -496,6 +641,16 @@ async function syncChainNote(
     if (pushText.size > 0 && !report.sentToOriva.includes(file.path)) report.sentToOriva.push(file.path);
   }
 
+  // A section merged into its neighbour on Oriva (a re-cut) left nothing to keep: its text is
+  // inside another section now. Only a section whose text went with it is saved to a copy.
+  const flat = (t: string) => t.replace(/%%[^%]*%%/g, '').replace(/\s+/g, ' ').trim();
+  const finalFlat = finalParts.map((p) => flat(p.text));
+  const mergedHere = removedHere.filter((p) => finalFlat.some((t) => t.includes(flat(p.text))));
+  for (const p of mergedHere) {
+    delete state.records[p.id];
+    say(`"${partTitle(p.text)}" was joined into the section above it in "${file.path}" on Oriva.`);
+  }
+  removedHere = removedHere.filter((p) => !mergedHere.includes(p));
   if (removedHere.length > 0) {
     const copyPath = conflictCopyPath(file.path, 'this device', ctx.now, ctx.taken);
     ctx.taken.add(copyPath);
