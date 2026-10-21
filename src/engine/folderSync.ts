@@ -182,6 +182,18 @@ export function isChainNote(markdown: string): boolean {
   return readOrivaMark(markdown) === 'chain' || readProperty(markdown, 'oriva_chain') === 'true';
 }
 
+/**
+ * Whether a synced note goes to Oriva as a chain. Every synced note with two or more `## `
+ * sections does — Chairman, 2026-10-21: "notes sync'd should all be chains … each entry is atomic" — and so
+ * does any note marked as a chain. `isChainNote` still answers only "is it MARKED", which the sync uses to
+ * tell a note split here from one split on Oriva.
+ */
+export function syncsAsChain(markdown: string): boolean {
+  if (isChainNote(markdown)) return true;
+  const synced = readOrivaMark(markdown) === 'true' || !!extractOrivaId(markdown);
+  return synced && splitChainNote(markdown).parts.filter((p) => p.text.startsWith('## ')).length >= 2;
+}
+
 /** The text two sides compare: no `oriva_id`, Unix line endings, no trailing blank space. */
 export const normaliseNoteText = (text: string): string => removeOrivaId(text).replace(/\r\n/g, '\n').trimEnd();
 
@@ -219,7 +231,8 @@ export function conflictCopyPath(path: string, side: 'Oriva' | 'this device', at
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Chained notes. A note with `oriva_chain: true` is kept on Oriva as one entry per `## `
+ * Chained notes. A synced note with two or more `## ` sections, or one marked
+ * `oriva_chain: true`, is kept on Oriva as one entry per `## `
  * section (text before the first `## ` is the first part). Each part carries its own id in a hidden
  * line under its heading — `%% oriva-part: <id> %%`, an Obsidian comment, hidden in Reading view —
  * so a part is found again after headings are added, removed or moved. Parts are matched by that id,
@@ -565,7 +578,8 @@ export async function syncFolder(
     if (state.unlinkedPaths.includes(file.path)) continue;
     const mark = readOrivaMark(file.text);
     let id = extractOrivaId(file.text) ?? recordByPath.get(file.path)?.id;
-    if (isChainNote(file.text)) {
+    // A marked chain, or (where this host can save chains) any synced note with two or more `## ` sections.
+    if (isChainNote(file.text) || (chainsOn && syncsAsChain(file.text))) {
       // Claimed so its first part is never written back over the file or beside it.
       if (id) claimed.add(id);
       if (chainsOn) chainFiles.push(file);

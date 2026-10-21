@@ -209,8 +209,8 @@ class OrivaSettingTab extends PluginSettingTab {
               'Sync keeps the notes you choose in step with your Oriva notes. Only a note whose properties include "oriva: true" is ' +
               'synced; the rest of this vault is never read into Oriva or changed. Marked notes arrive in Oriva as private notes. If a note changed in both ' +
               'places, the newer version is kept and the other is saved beside it as a "conflicted copy", and you are told. Deleting a ' +
-              'note in one place never deletes it in the other. A long note with "oriva_chain" also ticked is kept in Oriva as one entry per ' +
-              '"## " section, each matched by a hidden line under its heading, so sections can be added, moved or removed and their ' +
+              'note in one place never deletes it in the other. A note with two or more "## " sections is kept in Oriva as one entry per ' +
+              'section (and is marked "oriva_chain"), each matched by a hidden line under its heading, so sections can be added, moved or removed and their ' +
               'replies stay with them; a removed section is kept in Oriva as its own note.',
           },
           {
