@@ -12,7 +12,8 @@
  *  - Only the notes you mark are synced: add the property `oriva: true` to a note.
  *    Everything else in the folder is never read into Oriva and never changed. A note already
  *    linked to Oriva (it carries `oriva_id`) keeps syncing.
- *  - A note marked `oriva: chain` is kept on Oriva as one entry per `## ` section, each
+ *  - A note with the checkbox `oriva_chain: true` (or the older `oriva: chain`) is kept on Oriva as one
+ *    entry per `## ` section, each
  *    matched by a hidden `%% oriva-part: <id> %%` line under its heading: sections can be added,
  *    moved or removed, a removed one leaves the chain and is kept, and edits flow both ways per
  *    section. It goes through `/api/vault-sync/chains`; a host without `listChains`/`saveChain`
@@ -95,7 +96,7 @@ export type ChainPushResult =
 export interface NotesApi {
   listNotes(): Promise<RemoteNote[]>;
   saveNotes(notes: PushNote[]): Promise<PushResult[]>;
-  /** Chains. A host without these keeps skipping notes marked `oriva: chain`. */
+  /** Chains. A host without these keeps skipping chained notes (`oriva_chain: true`). */
   listChains?(): Promise<RemoteChain[]>;
   saveChain?(chain: ChainPush): Promise<ChainPushResult>;
 }
@@ -164,6 +165,23 @@ export function readOrivaMark(markdown: string): string | undefined {
   return line[1]!.replace(/^(['"])(.*)\1$/, '$2').toLowerCase();
 }
 
+/** A property's value in a note's properties block, lower-cased and unquoted, or undefined. */
+function readProperty(markdown: string, name: string): string | undefined {
+  const block = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const line = block?.[1]!.match(new RegExp(`^${name}:[ \\t]*(.*?)[ \\t]*$`, 'm'));
+  if (!line) return undefined;
+  return line[1]!.replace(/^(['"])(.*)\1$/, '$2').toLowerCase();
+}
+
+/**
+ * Whether a note is kept on Oriva as linked sections. `oriva` is a CHECKBOX in Obsidian, so it
+ * cannot hold "chain" (Chairman, 2026-10-20): the second checkbox `oriva_chain: true` says "split into
+ * sections". `oriva: chain`, written before that, still counts.
+ */
+export function isChainNote(markdown: string): boolean {
+  return readOrivaMark(markdown) === 'chain' || readProperty(markdown, 'oriva_chain') === 'true';
+}
+
 /** The text two sides compare: no `oriva_id`, Unix line endings, no trailing blank space. */
 export const normaliseNoteText = (text: string): string => removeOrivaId(text).replace(/\r\n/g, '\n').trimEnd();
 
@@ -201,7 +219,7 @@ export function conflictCopyPath(path: string, side: 'Oriva' | 'this device', at
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Chained notes. A note marked `oriva: chain` is kept on Oriva as one entry per `## `
+ * Chained notes. A note with `oriva_chain: true` is kept on Oriva as one entry per `## `
  * section (text before the first `## ` is the first part). Each part carries its own id in a hidden
  * line under its heading — `%% oriva-part: <id> %%`, an Obsidian comment, hidden in Reading view —
  * so a part is found again after headings are added, removed or moved. Parts are matched by that id,
@@ -247,11 +265,16 @@ export function splitChainNote(markdown: string): { front: string; parts: ChainN
   return { front, parts };
 }
 
-/** Put `oriva: chain` in a properties block (making one when there is none). */
+/**
+ * Mark a properties block as a chained note with the two checkboxes, `oriva: true` and `oriva_chain: true`
+ * (making a block when there is none). An old `oriva: chain` becomes `oriva: true`, so Obsidian's checkbox
+ * shows it ticked instead of flagging a value it cannot hold.
+ */
 export function withChainMark(front: string): string {
-  if (!front) return '---\noriva: chain\n---\n';
-  if (/^oriva:[^\n]*$/m.test(front)) return front.replace(/^oriva:[^\n]*$/m, 'oriva: chain');
-  return front.replace(/^---\n/, '---\noriva: chain\n');
+  if (!front) return '---\noriva: true\noriva_chain: true\n---\n';
+  let out = /^oriva:[^\n]*$/m.test(front) ? front.replace(/^oriva:[^\n]*$/m, 'oriva: true') : front.replace(/^---\n/, '---\noriva: true\n');
+  out = /^oriva_chain:[^\n]*$/m.test(out) ? out.replace(/^oriva_chain:[^\n]*$/m, 'oriva_chain: true') : out.replace(/^(oriva: true)$/m, '$1\noriva_chain: true');
+  return out;
 }
 
 /** The note as the vault keeps it: each part with its id line under its first line, `oriva_id` = the first part. */
@@ -542,7 +565,7 @@ export async function syncFolder(
     if (state.unlinkedPaths.includes(file.path)) continue;
     const mark = readOrivaMark(file.text);
     let id = extractOrivaId(file.text) ?? recordByPath.get(file.path)?.id;
-    if (mark === 'chain') {
+    if (isChainNote(file.text)) {
       // Claimed so its first part is never written back over the file or beside it.
       if (id) claimed.add(id);
       if (chainsOn) chainFiles.push(file);
@@ -716,7 +739,7 @@ async function syncChains(ctx: ChainContext, files: LocalNote[], remoteChains: R
       }
       if (chain) claimedChains.add(chain.chainId);
       // Not marked as a chain here and never synced as one: it was split on Oriva.
-      const splitOnOriva = !!chain && readOrivaMark(original.text) !== 'chain' && !state.chains?.[chain.chainId];
+      const splitOnOriva = !!chain && !isChainNote(original.text) && !state.chains?.[chain.chainId];
       await syncChainNote(ctx, file, chain, adopt, splitOnOriva);
     } catch (error) {
       report.errors.push({ path: file.path, message: error instanceof Error ? error.message : String(error) });
